@@ -3,77 +3,89 @@ import path from 'node:path';
 import * as cheerio from 'cheerio';
 
 const CACHE_DIR = path.resolve('cache');
-const START_URL = 'https://books.toscrape.com/catalogue/page-1.html';
 const USER_AGENT = 'FlyRankInternship-A9/1.0 (+https://github.com/HeavyFromTF2/week5-scraper)';
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Stage 1: Fetch HTML with cache-first strategy and politeness rules
+async function fetchPage(url, cacheFile) {
+  const filePath = path.join(CACHE_DIR, cacheFile);
 
-async function fetchPage(url, cacheFileName) {
-  const filePath = path.join(CACHE_DIR, cacheFileName);
-
-  // 1. Try cache
+  // Read from local cache if available
   try {
-    const cachedData = await fs.readFile(filePath, 'utf-8');
-    const size = Buffer.byteLength(cachedData, 'utf-8');
-    console.log(`CACHE HIT (${size} bytes)`);
-    return { html: cachedData, fromCache: true };
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
+    const cached = await fs.readFile(filePath, 'utf-8');
+    console.log(`CACHE HIT (${Buffer.byteLength(cached)} bytes)`);
+    return cached;
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
   }
 
-  // 2. Politeness delay before network call
+  // Delay for network polite fetching
   await sleep(500);
 
-  // 3. Fetch from network
-  const response = await fetch(url, {
+  const res = await fetch(url, {
     headers: { 'User-Agent': USER_AGENT },
     signal: AbortSignal.timeout(5000)
   });
 
-  if (response.status !== 200) {
-    throw new Error(`Failed to fetch ${url}: expected status 200, got ${response.status}`);
-  }
+  if (res.status !== 200) throw new Error(`HTTP ${res.status} on ${url}`);
 
-  const html = await response.text();
-  const size = Buffer.byteLength(html, 'utf-8');
-
-  // 4. Save to cache
+  const html = await res.text();
   await fs.mkdir(CACHE_DIR, { recursive: true });
   await fs.writeFile(filePath, html, 'utf-8');
-  console.log(`FETCH (${size} bytes)`);
-
-  return { html, fromCache: false };
+  console.log(`FETCH (${Buffer.byteLength(html)} bytes)`);
+  return html;
 }
 
-async function discoverCatalogue() {
-  const bookUrls = new Set();
-  let currentUrl = START_URL;
+async function main() {
+  const booksToExtract = [];
+  let currentUrl = 'https://books.toscrape.com/catalogue/page-1.html';
   let pageCount = 0;
 
+  // Stage 2: Discover first 3 catalogue pages and extract book URLs
   while (currentUrl && pageCount < 3) {
     pageCount++;
-    const cacheFileName = `catalogue-page-${pageCount}.html`;
-
-    const { html } = await fetchPage(currentUrl, cacheFileName);
+    const html = await fetchPage(currentUrl, `catalogue-page-${pageCount}.html`);
     const $ = cheerio.load(html);
 
-    // Extract book links
     $('.product_pod h3 a').each((_, el) => {
-      const relativeHref = $(el).attr('href');
-      const absoluteUrl = new URL(relativeHref, currentUrl).href;
-      bookUrls.add(absoluteUrl);
+      const url = new URL($(el).attr('href'), currentUrl).href;
+      booksToExtract.push({ url, source: currentUrl });
     });
 
-    // Get next page link
-    const nextHref = $('.pager .next a').attr('href');
-    currentUrl = nextHref ? new URL(nextHref, currentUrl).href : null;
+    const next = $('.pager .next a').attr('href');
+    currentUrl = next ? new URL(next, currentUrl).href : null;
   }
 
-  console.log(
-    `catalogue_pages=${pageCount}, discovered=${bookUrls.size}, unique_urls=${bookUrls.size}`
-  );
+  // Remove duplicates
+  const uniqueBooks = Array.from(new Map(booksToExtract.map((b) => [b.url, b])).values());
+  console.log(`catalogue_pages=${pageCount}, discovered=${uniqueBooks.length}, unique_urls=${uniqueBooks.length}`);
 
-  return Array.from(bookUrls);
+  // Stage 3: Extract raw details from each book page
+  const rawRecords = [];
+  for (let i = 0; i < uniqueBooks.length; i++) {
+    const { url, source } = uniqueBooks[i];
+    const html = await fetchPage(url, `book-detail-${i + 1}.html`);
+    const $ = cheerio.load(html);
+
+    const main = $('.product_main');
+    const ratingMatch = main.find('.star-rating').attr('class')?.match(/star-rating\s+(\w+)/);
+
+    rawRecords.push({
+      title: main.find('h1').text().trim(),
+      product_url: url,
+      price_text: main.find('.price_color').text().trim(),
+      availability_text: main.find('.instock.availability').text().trim().replace(/\s+/g, ' '),
+      rating_text: ratingMatch ? ratingMatch[1] : null,
+      description: $('#product_description').next('p').text().trim() || null,
+      source_page: source,
+      fetched_at: new Date().toISOString()
+    });
+  }
+
+  // Stage 3 Checkpoint
+  console.log('\n--- Sample Raw Record ---');
+  console.log(JSON.stringify(rawRecords[0], null, 2));
+  console.log(`\ndetail_pages=${rawRecords.length}`);
 }
 
-discoverCatalogue().catch(console.error);
+main().catch(console.error);
