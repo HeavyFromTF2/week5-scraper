@@ -95,4 +95,28 @@ Below is a real execution metric report generated at `output/run-report.json`:
 }
 ```
 
-> "I will not reuse this code on another site without checking its rules and terms first. And I always respected the rule of identifying the project"
+## Bonus: AI vs Me
+
+What did the AI do better — and do you understand that code?
+
+* URL Handling: The AI did a great job combining relative links into valid absolute URLs using the built-in `URL` feature so no links broke.
+* Error Recovery: If a catalogue page fails to load (like a 404 error), it doesn't crash. Instead, it tries to guess the next page's web address and keeps going.
+* Code Structure: It split the code into clean, separate files (`config.js`, `fetcher.js`, `parser.js`, etc.), which makes it super easy to read and understand.
+
+What did it get wrong or silently skip?
+
+* Skipped Product Pages: The AI scraped all 60 books directly from the main listing pages. It never actually clicked into the individual book pages.
+* Missing Fields (`description` & `fetched_at`): Because it didn't open the book pages, it completely skipped the book description. It also forgot the timestamp and added extra fields I didn't ask for.
+
+What did your prompt forget to say?
+
+* Explicit Navigation: I asked for 60 books, but I forgot to explicitly tell it: "Click into each book's link to open its page." The AI took the easy route and scraped everything off the main list.
+* Exact Field Names: I didn't give it a strict list of field names, so the AI just made up its own fields.
+
+What to improve in the prompt
+To fix this in the rematch prompt, I need to add two simple rules:
+
+1. Force Detail Visits: Explicitly write: "You MUST open each book's individual page to get the description."
+2. List Every Field: Explicitly list all 8 field names (`title`, `product_url`, `price_text`, `availability_text`, `rating_text`, `description`, `source_page`, `fetched_at`) so it doesn't guess.
+
+> "I will not reuse this code on another site without checking its rules and terms first. And I always respected the rule of identifying the project" 
